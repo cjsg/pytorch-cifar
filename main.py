@@ -76,7 +76,8 @@ print('==> Building model..')
 # net = EfficientNetB0()
 # net = RegNetX_200MF()
 # net = SimpleDLA()
-net = SmallResNet18(d_h)
+# net = SmallResNet18(d_h)
+# net = Transformer_L2_H4_P4()
 net = net.to(device)
 print(net)
 if device == 'cuda':
@@ -105,7 +106,9 @@ def train(epoch):
     train_loss = 0
     correct = 0
     total = 0
+    print('ok1')
     for batch_idx, (inputs, targets) in enumerate(trainloader):
+        print('ok2')
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
         outputs = net(inputs)
