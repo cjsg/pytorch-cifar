@@ -69,9 +69,9 @@ class TransformerLayer(nn.Module):
         # NB: dim(image) = N * C * P^2
 
         super(TransformerLayer, self).__init__()
-        self.ln1 = nn.Identity()  # nn.LayerNorm()
+        self.ln1 = nn.LayerNorm([N+1, D])
         self.msa = MSA(N, D, H)
-        self.ln2 = nn.Identity()  # nn.LayerNorm()
+        self.ln2 = nn.LayerNorm([N+1, D])
         self.mlp = MLP(D)
 
     def forward(self, z):
@@ -95,7 +95,7 @@ class Transformer(nn.Module):
         self.embedding = Embed(D, N, P, C)
         self.transformer = nn.Sequential(
             *[TransformerLayer(D, H, N, P, C) for _ in range(L)])
-        self.ln = nn.Identity()  # nn.LayerNorm()
+        self.ln = nn.LayerNorm([D])
         self.linear = nn.Linear(D, K)
 
     def forward(self, x):
