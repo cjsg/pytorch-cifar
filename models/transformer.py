@@ -14,12 +14,14 @@ class Embed(nn.Module):
         super(Embed, self).__init__()
         self.D, self.N, self.P, self.C = D, N, P, C
         self.embed = nn.Linear(C*P**2, D)
+        self.cls = nn.parameter.Parameter(torch.randn(D))
         self.pos = nn.parameter.Parameter(torch.randn(N+1, D))
 
     def forward(self, x):
         bs = x.size(0)
+        cls = self.cls.repeat(bs, 1, 1)  # bs x 1 x D
         x = x.permute(0, 2, 3, 1).reshape(bs, self.N, self.C*self.P**2)  # .view does not work
-        out = torch.cat([torch.zeros(bs, 1, self.D), self.embed(x)], dim=1)  # bs x (N+1) x D
+        out = torch.cat([cls, self.embed(x)], dim=1)  # bs x (N+1) x D
         return out + self.pos
 
 class MSA(nn.Module):
