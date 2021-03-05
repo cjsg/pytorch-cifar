@@ -18,19 +18,20 @@ from einops import rearrange, repeat
 
 class Embed(nn.Module):
 
-    def __init__(self, d, n, p, c=3):
+    def __init__(self, d, n, p, c=3, dropout_rate=0.):
         super(Embed, self).__init__()
         self.d, self.n, self.p, self.c = d, n, p, c
         self.embed = nn.Linear(c*p**2, d)
         self.cls = nn.parameter.Parameter(torch.randn(d))
         self.pos = nn.parameter.Parameter(torch.randn(n+1, d))
+        self.dropout = nn.Dropout(dropout_rate)
 
     def forward(self, x):
         x = rearrange(x, 'b c (h1 h2) (w1 w2) -> b (h1 w1) (h2 w2 c)',
                       h2=self.p, w2=self.p)
         cls = repeat(self.cls, 'd -> b 1 d', b=x.size(0))
         out = torch.cat([cls, self.embed(x)], dim=1)  # b x (n+1) x d
-        return out + self.pos
+        return self.dropout(out + self.pos)
 
 class MSA(nn.Module):
 
@@ -41,9 +42,7 @@ class MSA(nn.Module):
         super(MSA, self).__init__()
         f = int(d / h)  # dimension of query, key & value vectors ('*f*eatures')
         self.h, self.d, self.f = h, d, f
-        self.to_qkv = nn.Sequential(
-            nn.Linear(d, 3*h*f, bias=False),  # input feature to q,k,v vectors
-            nn.Dropout(dropout_rate),)
+        self.to_qkv = nn.Linear(d, 3*h*f, bias=False)  # input feature to q,k,v vectors
         self.to_mlp = nn.Sequential(
             nn.Linear(h*f, d),  # aggregate attention heads and send to MLP
             nn.Dropout(dropout_rate),)
@@ -95,12 +94,12 @@ class ViT(nn.Module):
         self.transformer = nn.Sequential(
             *[Transformer(d, h, n, p, c, dropout_rate) for _ in range(l)])
         self.ln = nn.LayerNorm(d)
-        self.linear = nn.Linear(d, k)
+        self.to_class_logits = nn.Linear(d, k)
 
     def forward(self, x):
         z = self.embedding(x)
         z = self.transformer(z)
-        return self.linear(self.ln(z[:,0]))
+        return self.to_class_logits(self.ln(z[:,0]))
 
 
 def ViT_L2_H4_P4(dropout_rate=0.):
