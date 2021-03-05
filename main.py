@@ -19,7 +19,10 @@ def load_data(bs=128, num_workers=2, img_size=32):
     # img_size = size (height) of input image (can be 4, 8, 16 or 32)
 
     transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
+        transforms.ColorJitter(brightness=.2, contrast=.2, saturation=.2, hue=.2),
+        transforms.RandomResizedCrop(32, scale=(.8, 1.), padding=4),
+        transforms.RandomAffine(degrees=30, translate=(.2, .2), scale=(.8, 1.2), shear=(.1, .1, .1, .1)),
+        torchvision.transforms.RandomGrayscale(p=0.1),
         transforms.RandomHorizontalFlip(),
         transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
@@ -61,6 +64,7 @@ def train(epoch):
         loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
+        scheduler.step()  # if scheduler = OneCycleLR
 
         train_loss += loss.item()
         _, predicted = outputs.max(1)
@@ -96,6 +100,7 @@ def test(epoch):
     if acc > best_acc:
         print('Saving..')
         state = {
+            'args': args,
             'net': net.state_dict(),
             'acc': acc,
             'epoch': epoch,
@@ -109,6 +114,8 @@ def test(epoch):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+    parser.add_argument('--epochs', '-ep', default=200, type=int,
+                        help='number of epochs')
     parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
     parser.add_argument('--resume', '-r', action='store_true',
                         help='resume from checkpoint')
@@ -151,8 +158,8 @@ if __name__ == '__main__':
     # net = RegNetX_200MF()
     # net = SimpleDLA()
     # net = SmallResNet18(args.img_size)
-    net = ViT_L2_H4_P4(args.dropout_rate)
-    # net = ViT_L8_H4_P4(args.dropout_rate)
+    # net = ViT_L2_H4_P4(args.dropout_rate)
+    net = ViT_L8_H4_P4(args.dropout_rate)
     net = net.to(device)
     print(net)
     if device == 'cuda':
@@ -170,12 +177,17 @@ if __name__ == '__main__':
 
     # Training
     criterion = nn.CrossEntropyLoss()
-    # optimizer = optim.Adam(net.parameters(), lr=args.lr)
+    # optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=0.1)
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    #     optimizer, T_max=args.epochs)
     optimizer = optim.SGD(net.parameters(), lr=args.lr,
                           momentum=0.9, weight_decay=5e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=args.lr, epochs=args.epochs,
+        steps_per_epoch=len(trainloader), pct_start=0.05,
+        anneal_strategy='linear')
 
-    for epoch in range(start_epoch, start_epoch+200):
+    for epoch in range(start_epoch, args.epochs):
         train(epoch)
         test(epoch)
-        scheduler.step()
+        # scheduler.step()
