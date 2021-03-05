@@ -15,19 +15,19 @@ from models import *
 from utils import progress_bar
 
 
-def load_data(bs=128, num_workers=2, dh=32):
-    # dh = size (height) of input image (can be 4, 8, 16 or 32)
+def load_data(bs=128, num_workers=2, img_size=32):
+    # img_size = size (height) of input image (can be 4, 8, 16 or 32)
 
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
-        transforms.Resize((dh, dh)),
+        transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
 
     transform_test = transforms.Compose([
-        transforms.Resize((dh, dh)),
+        transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
@@ -112,10 +112,12 @@ if __name__ == '__main__':
     parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
     parser.add_argument('--resume', '-r', action='store_true',
                         help='resume from checkpoint')
-    parser.add_argument('--dh', '-d', default=32, type=int,
-                        help='image size (height or width)')
+    parser.add_argument('--img_size', '-d', default=32, type=int,
+                        help='desired image size '
+                        '(height or width in [4, 8, 16, 32)')
     parser.add_argument('--batch_size', '-bs', default=128, type=int,
                         help='batch size')
+    parser.add_argument('--dropout_rate', '-dr', default=0., type=float)
     parser.add_argument('--num_workers', '-nw', default=2, type=int,
                         help='number of workers in data loader')
     args = parser.parse_args()
@@ -129,7 +131,7 @@ if __name__ == '__main__':
     # Data
     print('==> Preparing data..')
     trainloader, testloader = load_data(
-        args.batch_size, args.num_workers, dh=args.dh)
+        args.batch_size, args.num_workers, img_size=args.img_size)
 
     # Model
     print('==> Building model..')
@@ -148,10 +150,11 @@ if __name__ == '__main__':
     # net = EfficientNetB0()
     # net = RegNetX_200MF()
     # net = SimpleDLA()
-    # net = SmallResNet18(args.dh)
-    net = Transformer_L2_H4_P4()
+    # net = SmallResNet18(args.img_size)
+    net = ViT_L2_H4_P4(args.dropout_rate)
+    # net = ViT_L8_H4_P4(args.dropout_rate)
     net = net.to(device)
-    # print(net)
+    print(net)
     if device == 'cuda':
         net = torch.nn.DataParallel(net)
         cudnn.benchmark = True

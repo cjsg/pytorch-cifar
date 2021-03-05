@@ -1,104 +1,101 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from math import sqrt
+from einops import rearrange, repeat
+
+'''
+    l = number of attention layers
+    d = dim of latent feature vector
+    h = number of SA heads
+    n = number of image patches
+    p = patch height / width
+    c = number of channels
+    k = number of classification classes
+    f = dim of qurey, key and value features
+    NB: image dim = c * n * p^2
+
+'''
 
 class Embed(nn.Module):
 
-    def __init__(self, D, N, P, C=3):
-        # D = latent feature vector dimension
-        # N = number of image patches
-        # P = patch height / width
-        # C = number of channels
-        # NB: image dim = C * N * P^2
+    def __init__(self, d, n, p, c=3):
         super(Embed, self).__init__()
-        self.D, self.N, self.P, self.C = D, N, P, C
-        self.embed = nn.Linear(C*P**2, D)
-        self.cls = nn.parameter.Parameter(torch.randn(D))
-        self.pos = nn.parameter.Parameter(torch.randn(N+1, D))
+        self.d, self.n, self.p, self.c = d, n, p, c
+        self.embed = nn.Linear(c*p**2, d)
+        self.cls = nn.parameter.Parameter(torch.randn(d))
+        self.pos = nn.parameter.Parameter(torch.randn(n+1, d))
 
     def forward(self, x):
-        bs = x.size(0)
-        cls = self.cls.repeat(bs, 1, 1)  # bs x 1 x D
-        x = x.permute(0, 2, 3, 1).reshape(bs, self.N, self.C*self.P**2)  # .view does not work
-        out = torch.cat([cls, self.embed(x)], dim=1)  # bs x (N+1) x D
+        x = rearrange(x, 'b c (h1 h2) (w1 w2) -> b (h1 w1) (h2 w2 c)',
+                      h2=self.p, w2=self.p)
+        cls = repeat(self.cls, 'd -> b 1 d', b=x.size(0))
+        out = torch.cat([cls, self.embed(x)], dim=1)  # b x (n+1) x d
         return out + self.pos
 
 class MSA(nn.Module):
 
-    def __init__(self, N, D, H):
-        # N = nbr of image patches
-        # D = patch input dim
-        # H = nbr of self attention heads
+    def __init__(self, n, d, h, dropout_rate=0.):
+        # n = nbr of image patches
+        # d = patch input dim
+        # h = nbr of self attention heads
         super(MSA, self).__init__()
-        Dh = int(D / H)  # dimension of query, key & value vectors
-        self.H, self.D, self.Dh = H, D, Dh
-        self.qkv = nn.Linear(D, H*3*Dh, bias=False)  # project input features to q,k,v vectors
-        self.aggregate = nn.Linear(H*Dh, D)  # aggregate H attention heads
+        f = int(d / h)  # dimension of query, key & value vectors ('*f*eatures')
+        self.h, self.d, self.f = h, d, f
+        self.to_qkv = nn.Sequential(
+            nn.Linear(d, 3*h*f, bias=False),  # input feature to q,k,v vectors
+            nn.Dropout(dropout_rate),)
+        self.to_mlp = nn.Sequential(
+            nn.Linear(h*f, d),  # aggregate attention heads and send to MLP
+            nn.Dropout(dropout_rate),)
 
     def forward(self, z):
-        # z = input of dim bs x (N+1) x D
-        bs, N, D = z.size()  # -> renaming N := N+1
-        H, Dh = self.H, self.Dh
-        QKV = self.qkv(z.view(bs*N, D)).view(bs, N, 3, H, Dh)
-        Q, K, V = QKV.permute(2, 0, 3, 1, 4) # dims of Q, K, V = bs x H x N x Dh
-        IPDs = torch.matmul(Q, K.transpose(2, 3)) / sqrt(Dh)  # bs x H x N x N
-        A = F.softmax(IPDs, dim=3)  # weights: bs x H x N x N
-        SA = torch.matmul(A, V)  # bs x H x N x Dh
-        SA = SA.permute(0, 2, 1, 3).reshape(bs*N, H*Dh)  # .view does not work
-        return self.aggregate(SA).view(bs, N, self.D)
+        b, n, d, h, f = *z.shape, self.h, self.f  # -> renaming n := n+1
+        qkv = self.to_qkv(z)
+        q, k, v = rearrange(qkv, 'b n (i h f) -> i b h n f', i=3, h=h)  # 3 x b h n f
+        dots = torch.einsum('bhnf,bhmf->bhnm', q, k) / sqrt(f) # here, n=m=n
+        attn = dots.softmax(dim=3)  # attention weights: b h n n
+        slf_attn = torch.einsum('bhnm,bhmf->bhnf', attn, v)  # b h n f
+        slf_attn = rearrange(slf_attn, 'b h n f -> b n (h f)')
+        return self.to_mlp(slf_attn)  # b n d
 
 
 class MLP(nn.Module):
 
-    def __init__(self, D):
+    def __init__(self, d, dropout_rate=0.):
         super(MLP, self).__init__()
-        self.layer1 = nn.Linear(D, D)
-        self.gelu = nn.GELU()
-        self.layer2 = nn.Linear(D, D)
+        self.mlp = nn.Sequential(
+            nn.Linear(d, d),
+            nn.Dropout(dropout_rate),
+            nn.GELU(),
+            nn.Linear(d, d),
+            nn.Dropout(dropout_rate),)
 
     def forward(self, z):
-        return self.layer2(self.gelu(self.layer1(z)))
+        return self.mlp(z)
 
-
-class TransformerLayer(nn.Module):
-    def __init__(self, D, H, N, P, C=3):
-        # D = latent feature/embedding dimension
-        # H = number of SA heads
-        # N = number of image patches
-        # P = height and wifth of an image patch
-        # C = number of image channels
-        # NB: dim(image) = N * C * P^2
-
-        super(TransformerLayer, self).__init__()
-        self.ln1 = nn.LayerNorm([N+1, D])
-        self.msa = MSA(N, D, H)
-        self.ln2 = nn.LayerNorm([N+1, D])
-        self.mlp = MLP(D)
+class Transformer(nn.Module):
+    def __init__(self, d, h, n, p, c=3, dropout_rate=0.):
+        super(Transformer, self).__init__()
+        self.ln1 = nn.LayerNorm([n+1, d])  # lucidrains uses LayerNorm(d)
+        self.msa = MSA(n, d, h, dropout_rate)
+        self.ln2 = nn.LayerNorm([n+1, d])  # lucidrains uses LayerNorm(d)
+        self.mlp = MLP(d, dropout_rate)
 
     def forward(self, z):
+        # dim(z) = b x (n+1) x d
         z = self.msa(self.ln1(z)) + z
         z = self.mlp(self.ln2(z)) + z
         return z
 
 
-class Transformer(nn.Module):
-    def __init__(self, L, D, H, N, P, C=3, K=10):
-        # L = number of attention layers
-        # D = latent feature vector dimension
-        # H = number of SA heads
-        # N = number of image patches
-        # P = patch height / width
-        # C = number of channels
-        # K = number of classification classes
-        # NB: image dim = C * N * P^2
-
-        super(Transformer, self).__init__()
-        self.embedding = Embed(D, N, P, C)
+class ViT(nn.Module):
+    def __init__(self, l, d, h, n, p, c=3, k=10, dropout_rate=0.):
+        super(ViT, self).__init__()
+        self.embedding = Embed(d, n, p, c)
         self.transformer = nn.Sequential(
-            *[TransformerLayer(D, H, N, P, C) for _ in range(L)])
-        self.ln = nn.LayerNorm([D])
-        self.linear = nn.Linear(D, K)
+            *[Transformer(d, h, n, p, c, dropout_rate) for _ in range(l)])
+        self.ln = nn.LayerNorm(d)
+        self.linear = nn.Linear(d, k)
 
     def forward(self, x):
         z = self.embedding(x)
@@ -106,11 +103,13 @@ class Transformer(nn.Module):
         return self.linear(self.ln(z[:,0]))
 
 
-def Transformer_L2_H4_P4():
-    return Transformer(L=2, H=4, N=8*8, D=4*4*3, P=4, C=3, K=10)
+def ViT_L2_H4_P4(dropout_rate=0.):
+    return ViT(
+        l=2, h=4, n=8*8, d=4*4*3, p=4, c=3, k=10, dropout_rate=dropout_rate)
 
-def Transformer_L8_H4_P4():
-    return Transformer(L=8, H=4, N=8*8, D=4*4*3, P=4, C=3, K=10)
+def ViT_L8_H4_P4(dropout_rate=0.):
+    return ViT(
+        l=8, h=4, n=8*8, d=4*4*3, p=4, c=3, k=10, dropout_rate=dropout_rate)
 
 
 def test():
