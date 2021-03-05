@@ -20,7 +20,7 @@ def load_data(bs=128, num_workers=2, img_size=32):
 
     transform_train = transforms.Compose([
         transforms.ColorJitter(brightness=.2, contrast=.2, saturation=.2, hue=.2),
-        transforms.RandomResizedCrop(32, scale=(.8, 1.), padding=4),
+        transforms.RandomResizedCrop(32, scale=(.8, 1.)),
         transforms.RandomAffine(degrees=30, translate=(.2, .2), scale=(.8, 1.2), shear=(.1, .1, .1, .1)),
         torchvision.transforms.RandomGrayscale(p=0.1),
         transforms.RandomHorizontalFlip(),
