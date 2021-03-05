@@ -15,6 +15,28 @@ from models import *
 from utils import progress_bar
 
 
+class Progress(object):
+    def __init__(self, *names):
+        self.monitor = dict()
+        for name in names:
+            self.monitor[name] = []
+
+    def update(self, name, val):
+        if name not in self.monitor:
+            self.monitor[name] = [val]
+        else:
+            self.monitor[name].append(val)
+
+    def __getitem__(self, key):                                                                                                                                                                         
+        return self.monitor[key]
+
+    def display(self):
+        entries = ['Progress:']
+        for name in self.monitor:
+            entries.append(f'\n  {name}:\t{torch.tensor(self.monitor[name])}')
+        print(''.join(entries))
+
+
 def load_data(bs=128, num_workers=2, img_size=32):
     # img_size = size (height) of input image (can be 4, 8, 16 or 32)
 
@@ -73,6 +95,9 @@ def train(epoch):
 
         progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
                      % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+    
+    progress.update('tr_loss', train_loss/(batch_idx+1))
+    progress.update('tr_acc', 100.*correct/total)
 
 
 def test(epoch):
@@ -86,7 +111,7 @@ def test(epoch):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = net(inputs)
             loss = criterion(outputs, targets)
-
+  
             test_loss += loss.item()
             _, predicted = outputs.max(1)
             total += targets.size(0)
@@ -95,30 +120,50 @@ def test(epoch):
             progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
                          % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
-    # Save checkpoint.
-    acc = 100.*correct/total
-    if acc > best_acc:
-        print('Saving..')
+        te_acc = 100.*correct/total
+        best_acc = max(te_acc, best_acc)
+        progress.update('te_loss', test_loss/(batch_idx+1))
+        progress.update('te_acc', te_acc)
+
+
+def save_if_needed(epoch, ckptdir):
+    if not os.path.isdir('checkpoint'):
+        os.mkdir('checkpoint')
+    if not os.path.isdir('checkpoint/'+ckptdir):
+        os.mkdir('checkpoint/'+ckptdir)
+
+    acc = progress['te_acc'][-1]
+    print('acc', acc)
+    print('best_acc', best_acc)
+    # Save every 10 epochs or if best or last
+
+    if ((epoch+1) % 10 == 0) or (epoch+1 == args.epochs) or (acc == best_acc):
         state = {
             'args': args,
             'net': net.state_dict(),
             'acc': acc,
             'epoch': epoch,
+            'progress': progress,
+            'best_acc': best_acc,
         }
-        if not os.path.isdir('checkpoint'):
-            os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/ckpt.pth')
-        best_acc = acc
+
+    if ((epoch+1) % 10 == 0) or (epoch+1 == args.epochs):
+        print('Saving..')
+        torch.save(state, f'./checkpoint/{ckptdir}/{epoch:03d}.pth')
+        
+    if acc == best_acc:
+        print('Saving..')
+        torch.save(state, f'./checkpoint/{ckptdir}/best.pth')
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
-    parser.add_argument('--epochs', '-ep', default=200, type=int,
+    parser.add_argument('--epochs', '-ep', default=400, type=int,
                         help='number of epochs')
     parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
-    parser.add_argument('--resume', '-r', action='store_true',
-                        help='resume from checkpoint')
+    parser.add_argument('--ckpt_path', default=None, type=str,
+                        help='path to checkpoint')
     parser.add_argument('--img_size', '-d', default=32, type=int,
                         help='desired image size '
                         '(height or width in [4, 8, 16, 32)')
@@ -130,6 +175,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     datadir = os.path.expanduser('~/datasets/cifar10')
+    ckptdir = f'lr={args.lr:6.4f}'
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     best_acc = 0  # best test accuracy
@@ -158,22 +204,23 @@ if __name__ == '__main__':
     # net = RegNetX_200MF()
     # net = SimpleDLA()
     # net = SmallResNet18(args.img_size)
-    # net = ViT_L2_H4_P4(args.dropout_rate)
-    net = ViT_L8_H4_P4(args.dropout_rate)
+    net = ViT_L2_H4_P4(args.dropout_rate)
+    # net = ViT_L8_H4_P4(args.dropout_rate)
     net = net.to(device)
     print(net)
     if device == 'cuda':
         net = torch.nn.DataParallel(net)
         cudnn.benchmark = True
 
-    if args.resume:
+    progress = Progress()
+    if args.ckpt_path is not None:
         # Load checkpoint.
         print('==> Resuming from checkpoint..')
-        assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-        checkpoint = torch.load('./checkpoint/ckpt.pth')
+        checkpoint = torch.load(args.ckpt_path)   # './checkpoint/ckpt.pth')
         net.load_state_dict(checkpoint['net'])
-        best_acc = checkpoint['acc']
-        start_epoch = checkpoint['epoch']
+        best_acc = checkpoint['best_acc']
+        start_epoch = checkpoint['epoch']+1
+        progress = checkpoint['progress']
 
     # Training
     criterion = nn.CrossEntropyLoss()
@@ -188,6 +235,8 @@ if __name__ == '__main__':
         anneal_strategy='linear')
 
     for epoch in range(start_epoch, args.epochs):
+        # progress.display()
         train(epoch)
         test(epoch)
         # scheduler.step()
+        save_if_needed(epoch, ckptdir)
