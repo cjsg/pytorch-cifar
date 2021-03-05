@@ -204,8 +204,8 @@ if __name__ == '__main__':
     # net = RegNetX_200MF()
     # net = SimpleDLA()
     # net = SmallResNet18(args.img_size)
-    net = ViT_L2_H4_P4(args.dropout_rate)
-    # net = ViT_L8_H4_P4(args.dropout_rate)
+    # net = ViT_L2_H4_P4(args.dropout_rate)
+    net = ViT_L8_H4_P4(args.dropout_rate)
     net = net.to(device)
     print(net)
     if device == 'cuda':
