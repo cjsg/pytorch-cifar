@@ -12,7 +12,7 @@ import os
 import argparse
 
 from models import *
-from utils import progress_bar
+# from utils import progress_bar
 
 
 class Progress(object):
@@ -30,10 +30,16 @@ class Progress(object):
     def __getitem__(self, key):                                                                                                                                                                         
         return self.monitor[key]
 
-    def display(self):
+    def display_all(self):
         entries = ['Progress:']
         for name in self.monitor:
             entries.append(f'\n  {name}:\t{torch.tensor(self.monitor[name])}')
+        print(''.join(entries))
+
+    def display(self, epoch):
+        entries = [f'{epoch:03d}']
+        for name in self.monitor:
+            entries.append(f'   {name}: {self.monitor[name][-1]:.4f}')
         print(''.join(entries))
 
 
@@ -74,7 +80,7 @@ def load_data(bs=128, num_workers=2, img_size=32):
 
 
 def train(epoch):
-    print('\nEpoch: %d' % epoch)
+    # print('\nEpoch: %d' % epoch)
     net.train()
     train_loss = 0
     correct = 0
@@ -93,8 +99,8 @@ def train(epoch):
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
 
-        progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                     % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        # progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+        #              % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
     
     progress.update('tr_loss', train_loss/(batch_idx+1))
     progress.update('tr_acc', 100.*correct/total)
@@ -117,8 +123,8 @@ def test(epoch):
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
 
-            progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                         % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+            # progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+            #              % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
         te_acc = 100.*correct/total
         best_acc = max(te_acc, best_acc)
@@ -133,8 +139,6 @@ def save_if_needed(epoch, ckptdir):
         os.mkdir('checkpoint/'+ckptdir)
 
     acc = progress['te_acc'][-1]
-    print('acc', acc)
-    print('best_acc', best_acc)
     # Save every 10 epochs or if best or last
 
     if ((epoch+1) % 10 == 0) or (epoch+1 == args.epochs) or (acc == best_acc):
@@ -148,18 +152,18 @@ def save_if_needed(epoch, ckptdir):
         }
 
     if ((epoch+1) % 10 == 0) or (epoch+1 == args.epochs):
-        print('Saving..')
+        # print('Saving..')
         torch.save(state, f'./checkpoint/{ckptdir}/{epoch:03d}.pth')
         
     if acc == best_acc:
-        print('Saving..')
+        # print('Saving..')
         torch.save(state, f'./checkpoint/{ckptdir}/best.pth')
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
-    parser.add_argument('--epochs', '-ep', default=400, type=int,
+    parser.add_argument('--epochs', '-ep', default=500, type=int,
                         help='number of epochs')
     parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
     parser.add_argument('--ckpt_path', default=None, type=str,
@@ -207,7 +211,7 @@ if __name__ == '__main__':
     # net = ViT_L2_H4_P4(args.dropout_rate)
     net = ViT_L8_H4_P4(args.dropout_rate)
     net = net.to(device)
-    print(net)
+    # print(net)
     if device == 'cuda':
         net = torch.nn.DataParallel(net)
         cudnn.benchmark = True
@@ -234,9 +238,10 @@ if __name__ == '__main__':
         steps_per_epoch=len(trainloader), pct_start=0.05,
         anneal_strategy='linear')
 
+    print("==> Starting to train")
     for epoch in range(start_epoch, args.epochs):
-        # progress.display()
         train(epoch)
         test(epoch)
         # scheduler.step()
         save_if_needed(epoch, ckptdir)
+        progress.display(epoch)
