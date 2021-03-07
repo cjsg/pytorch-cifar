@@ -225,6 +225,9 @@ if __name__ == '__main__':
         best_acc = checkpoint['best_acc']
         start_epoch = checkpoint['epoch']+1
         progress = checkpoint['progress']
+        epochs = args.epochs
+        args = checkpoint['args']
+        args.epochs = epochs
 
     # Training
     criterion = nn.CrossEntropyLoss()
@@ -234,7 +237,7 @@ if __name__ == '__main__':
     optimizer = optim.SGD(net.parameters(), lr=args.lr,
                           momentum=0.9, weight_decay=5e-4)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer, max_lr=args.lr, epochs=args.epochs,
+        optimizer, max_lr=args.lr/1e4, epochs=args.epochs,
         steps_per_epoch=len(trainloader), pct_start=0.05,
         anneal_strategy='linear')
 
