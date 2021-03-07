@@ -145,6 +145,8 @@ def save_if_needed(epoch, ckptdir):
         state = {
             'args': args,
             'net': net.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'scheduler': scheduler.state_dict(),
             'acc': acc,
             'epoch': epoch,
             'progress': progress,
@@ -179,7 +181,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     datadir = os.path.expanduser('~/datasets/cifar10')
-    ckptdir = f'lr={args.lr:6.4f}'
+    ckptdir = f'adam_lr={args.lr:6.4f}'
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     best_acc = 0  # best test accuracy
@@ -231,13 +233,13 @@ if __name__ == '__main__':
 
     # Training
     criterion = nn.CrossEntropyLoss()
-    # optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=0.1)
+    optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=0.1)
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
     #     optimizer, T_max=args.epochs)
-    optimizer = optim.SGD(net.parameters(), lr=args.lr,
-                          momentum=0.9, weight_decay=5e-4)
+    # optimizer = optim.SGD(net.parameters(), lr=args.lr,
+    #                       momentum=0.9, weight_decay=5e-4)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer, max_lr=args.lr/1e4, epochs=args.epochs,
+        optimizer, max_lr=args.lr, epochs=args.epochs,
         steps_per_epoch=len(trainloader), pct_start=0.05,
         anneal_strategy='linear')
 
