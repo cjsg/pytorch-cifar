@@ -11,6 +11,7 @@ import torchvision.transforms as transforms
 import os
 import argparse
 import time
+from math import log10, ceil
 
 from models import *
 from utils import *
@@ -187,7 +188,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     datadir = os.path.expanduser('~/datasets/cifar10')
-    ckptdir = os.path.join('checkpoint', args.name, f'lr={args.lr:6.4f}')
+    n_dig = ceil(-log10(args.lr))
+    fmt = '.' + str(n_dig) + 'f' if n_dig > 0 else str(-n_dig+1) + '.0f'
+    string = 'lr={lr:' + fmt + '}'
+    ckptdir = os.path.join('checkpoint', args.name, string.format(lr=args.lr))
+    # ckptdir = os.path.join('checkpoint', args.name, f'lr={args.lr:f}')
     args.verbose = (args.verbose != 0)
     if args.verbose:
         initialize_progress_bar_settings()
