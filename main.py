@@ -10,8 +10,10 @@ import torchvision.transforms as transforms
 
 import os
 import argparse
+import time
 
 from models import *
+from utils import *
 # from utils import progress_bar
 
 
@@ -85,6 +87,7 @@ def train(epoch):
     train_loss = 0
     correct = 0
     total = 0
+    start_time = time.time()
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
@@ -99,9 +102,11 @@ def train(epoch):
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
 
-        # progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-        #              % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        if args.verbose:
+            progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                         % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
     
+    progress.update('tr_time', time.time()-start_time)
     progress.update('tr_loss', train_loss/(batch_idx+1))
     progress.update('tr_acc', 100.*correct/total)
 
@@ -112,6 +117,7 @@ def test(epoch):
     test_loss = 0
     correct = 0
     total = 0
+    start_time = time.time()
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(testloader):
             inputs, targets = inputs.to(device), targets.to(device)
@@ -123,20 +129,20 @@ def test(epoch):
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
 
-            # progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-            #              % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+            if args.verbose:
+                progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+                             % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
         te_acc = 100.*correct/total
         best_acc = max(te_acc, best_acc)
+        progress.update('te_time', time.time()-start_time)
         progress.update('te_loss', test_loss/(batch_idx+1))
         progress.update('te_acc', te_acc)
 
 
 def save_if_needed(epoch, ckptdir):
-    if not os.path.isdir('checkpoint'):
-        os.mkdir('checkpoint')
-    if not os.path.isdir('checkpoint/'+ckptdir):
-        os.mkdir('checkpoint/'+ckptdir)
+    if not os.path.isdir(ckptdir):
+        os.makedirs(ckptdir)
 
     acc = progress['te_acc'][-1]
     # Save every 10 epochs or if best or last
@@ -154,38 +160,48 @@ def save_if_needed(epoch, ckptdir):
         }
 
     if ((epoch+1) % 10 == 0) or (epoch+1 == args.epochs):
-        # print('Saving..')
-        torch.save(state, f'./checkpoint/{ckptdir}/{epoch:03d}.pth')
+        torch.save(state, os.path.join(f'{ckptdir}', f'{epoch:03d}.pth'))
         
     if acc == best_acc:
-        # print('Saving..')
-        torch.save(state, f'./checkpoint/{ckptdir}/best.pth')
+        torch.save(state, os.path.join(f'{ckptdir}', 'best.pth'))
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+    parser.add_argument('--name', '-nm', type=str, help='Mandatory: experiment name')
     parser.add_argument('--epochs', '-ep', default=500, type=int,
                         help='number of epochs')
-    parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+    parser.add_argument('--lr', '-lr', default=0.1, type=float, help='learning rate')
     parser.add_argument('--ckpt_path', default=None, type=str,
                         help='path to checkpoint')
     parser.add_argument('--img_size', '-d', default=32, type=int,
                         help='desired image size '
                         '(height or width in [4, 8, 16, 32)')
     parser.add_argument('--batch_size', '-bs', default=128, type=int,
-                        help='batch size')
+                        help='batch size per (cuda) device.')
     parser.add_argument('--dropout_rate', '-dr', default=0., type=float)
     parser.add_argument('--num_workers', '-nw', default=2, type=int,
                         help='number of workers in data loader')
+    parser.add_argument('--verbose', '-v', default=0, type=int)
     args = parser.parse_args()
 
     datadir = os.path.expanduser('~/datasets/cifar10')
-    ckptdir = f'adam_lr={args.lr:6.4f}'
+    ckptdir = os.path.join('checkpoint', args.name, f'lr={args.lr:6.4f}')
+    args.verbose = (args.verbose != 0)
+    if args.verbose:
+        initialize_progress_bar_settings()
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if torch.cuda.is_available():
+        device = 'cuda'
+        device_count = torch.cuda.device_count()
+    else:
+        device = 'cpu'
+        device_count = 1
+
     best_acc = 0  # best test accuracy
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
+    args.batch_size = device_count * args.batch_size
 
     # Data
     print('==> Preparing data..')
@@ -212,6 +228,7 @@ if __name__ == '__main__':
     # net = SmallResNet18(args.img_size)
     # net = ViT_L2_H4_P4(args.dropout_rate)
     net = ViT_L8_H4_P4(args.dropout_rate)
+    init_params(net)
     net = net.to(device)
     # print(net)
     if device == 'cuda':
@@ -234,14 +251,16 @@ if __name__ == '__main__':
     # Training
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=0.1)
+    pct_start = 1e4 / (len(trainloader)*args.epochs*args.batch_size)  # 10K warm-up
+    print(f'pct_start {pct_start:.2e}')
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=args.lr, epochs=args.epochs,
+        steps_per_epoch=len(trainloader), pct_start=pct_start,
+        anneal_strategy='linear')
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
     #     optimizer, T_max=args.epochs)
     # optimizer = optim.SGD(net.parameters(), lr=args.lr,
     #                       momentum=0.9, weight_decay=5e-4)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer, max_lr=args.lr, epochs=args.epochs,
-        steps_per_epoch=len(trainloader), pct_start=0.05,
-        anneal_strategy='linear')
 
     print("==> Starting to train")
     for epoch in range(start_epoch, args.epochs):
