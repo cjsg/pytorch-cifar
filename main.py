@@ -174,6 +174,10 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', '-ep', default=500, type=int,
                         help='number of epochs')
     parser.add_argument('--lr', '-lr', default=0.1, type=float, help='learning rate')
+    parser.add_argument('--adameps', default=1e-8, type=float,
+                        help="adam's eps parameter")
+    parser.add_argument('--amsgrad', default=0, type=int,
+                        help='if >0, use amsgrad in adam')
     parser.add_argument('--ckpt_path', default=None, type=str,
                         help='path to checkpoint')
     parser.add_argument('--img_size', '-d', default=32, type=int,
@@ -183,17 +187,19 @@ if __name__ == '__main__':
                         help='batch size per (cuda) device.')
     parser.add_argument('--dropout_rate', '-dr', default=0., type=float)
     parser.add_argument('--num_workers', '-nw', default=2, type=int,
-                        help='number of workers in data loader')
+                        help='number of workers in data loader per (cuda) device')
     parser.add_argument('--verbose', '-v', default=0, type=int)
     args = parser.parse_args()
 
     datadir = os.path.expanduser('~/datasets/cifar10')
     n_dig = ceil(-log10(args.lr))
     fmt = '.' + str(n_dig) + 'f' if n_dig > 0 else str(-n_dig+1) + '.0f'
-    string = 'lr={lr:' + fmt + '}'
-    ckptdir = os.path.join('checkpoint', args.name, string.format(lr=args.lr))
+    string = 'lr={lr:' + fmt + '}_adameps={adameps:6.4f}'
+    ckptdir = os.path.join('checkpoint', args.name, string.format(
+        lr=args.lr, adameps=args.adameps))
     # ckptdir = os.path.join('checkpoint', args.name, f'lr={args.lr:f}')
     args.verbose = (args.verbose != 0)
+    args.amsgrad = (args.amsgrad != 0)
     if args.verbose:
         initialize_progress_bar_settings()
 
@@ -207,6 +213,7 @@ if __name__ == '__main__':
     best_acc = 0  # best test accuracy
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
     args.batch_size = device_count * args.batch_size
+    args.num_workers = device_count * args.num_workers
 
     # Data
     print('==> Preparing data..')
@@ -255,9 +262,10 @@ if __name__ == '__main__':
 
     # Training
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=0.1)
+    optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=0.1,
+                           eps=args.adameps, amsgrad=args.amsgrad)
     pct_start = 1e4 / (len(trainloader)*args.epochs*args.batch_size)  # 10K warm-up
-    print(f'pct_start {pct_start:.2e}')
+    # print(f'pct_start {pct_start:.2e}')
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer, max_lr=args.lr, epochs=args.epochs,
         steps_per_epoch=len(trainloader), pct_start=pct_start,
